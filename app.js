@@ -1,6 +1,6 @@
 'use strict';
 /* theme: persisted, applied before paint */
-const root=document.documentElement;const setTheme=t=>{root.dataset.theme=t;localStorage.theme=t;const b=document.querySelector('#themeBtn');if(b){const light=t=='light';b.setAttribute('aria-label',light?'Switch to dark mode':'Switch to light mode');b.textContent=light?'Dark theme':'Light theme'}};setTheme(localStorage.theme||'dark');
+const root=document.documentElement;const setTheme=t=>{root.dataset.theme=t;localStorage.theme=t;const b=document.querySelector('#themeBtn');const icon=document.querySelector('#themeIcon');const light=t=='light';if(b)b.setAttribute('aria-label',light?'Switch to dark mode':'Switch to light mode');if(icon)icon.setAttribute('href',light?'#i-moon':'#i-sun')};setTheme(localStorage.theme||'dark');
 const $=s=>document.querySelector(s),esc=t=>String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const kb=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
 // Deployment base: served by the companion backend under /valet/, so the API lives one level up (keeps any /bags-mark/ proxy prefix).
@@ -16,17 +16,18 @@ function currentPersonality(){return ['cynical','precise','warm'].includes(local
 async function http(path,o={}){const h={...(o.headers||{})};if(B.token)h.Authorization='Bearer '+B.token;
  let body=o.body;if(body&&!(body instanceof Blob)&&typeof body!='string'){body=JSON.stringify(body);h['Content-Type']='application/json'}
  const r=await fetch(U(path),{method:o.method||'GET',headers:h,body});const d=await r.json().catch(()=>({}));
- if(r.status==401&&B.token){rememberToken(null);closeWS();setConn();sys('Session expired. Sign in again from the connection panel.')}return{ok:r.ok,status:r.status,data:d}}
+ if(r.status==401&&B.token){rememberToken(null);closeWS();setConn();sys('Session expired. Sign in again from Profile.')}return{ok:r.ok,status:r.status,data:d}}
 const api=(p,o={})=>B.mode=='server'?http('api/'+p,o):mockApi(p,o);
 async function detect(){try{const r=await fetch(U('health'),{cache:'no-store'});const d=await r.json();if(d&&d.protocol==1){B.mode='server';B.provider=d.provider;const saved=localStorage.valetToken;if(saved){B.token=saved;const s=await http('api/session');if(s.ok){B.expires=s.data.expires_at;B.provider=s.data.provider;if(s.data.personality)applyPersonality(s.data.personality);hideConn();setConn();await loadRoster();await loadHistory();openWS();return}rememberToken(null)}setConn();return}}catch{}B.mode='mock';restoreLocal();setConn()}
-function hideConn(){const p=$('#connPanel');if(p)p.hidden=true;$('#connBtn').setAttribute('aria-expanded','false')}
-function setConn(){const c=$('#conn'),n=$('#connNote');const signedOut=B.mode=='server'&&!B.token;$('#loginForm').hidden=!signedOut;$('#pairForm').hidden=!signedOut;$('#lockBtn').hidden=!(B.mode=='server'&&B.token);
+function hideConn(){const p=$('#profileSheet');if(p)p.hidden=true;const b=$('#profileBtn');if(b)b.setAttribute('aria-expanded','false')}
+function paintModel(){const line=$('#modelLine');if(!line)return;const provider=B.provider;if(!provider){line.textContent=B.mode=='mock'?'Model: local, on this device.':'Model: not reported yet.';return}line.textContent=provider.model?`Model: ${provider.name} (${provider.model}).`:`Model: ${provider.name}.`}
+function setConn(){const c=$('#conn'),n=$('#connNote');const signedOut=B.mode=='server'&&!B.token;$('#loginForm').hidden=!signedOut;$('#pairForm').hidden=!signedOut;$('#lockBtn').hidden=!(B.mode=='server'&&B.token);paintModel();
  if(B.mode=='mock'){c.textContent='On this device';n.textContent='No Bags server was found here. This conversation stays in the browser.'}
  else if(B.mode!='server'){c.textContent='Checking';n.textContent='Looking for a Bags server on this origin.'}
- else if(!B.token){c.textContent='Sign in';n.textContent='Bags server found. Sign in with the owner password, or pair with a one-time code (it expires in 5 minutes).';if(!B.panelShown){B.panelShown=true;$('#connPanel').hidden=false;$('#connBtn').setAttribute('aria-expanded','true')}}
- else{const st=B.provider?.state||'unknown';const named=B.provider?.model?`${B.provider.name} (${B.provider.model})`:(B.provider?.name||'none');c.textContent=B.wsReady?'Connected':'Signed in';n.textContent=`Signed in. Text provider: ${named} (${st}). Session expires ${new Date(B.expires*1000).toLocaleTimeString()}. Personality changes tone only.`}
- $('#provider').textContent=(voiceSession.active?'Live':B.mode=='mock'?'Text on this device':'Text')+' · '+currentPersonality()}
-$('#connBtn').onclick=()=>{const p=$('#connPanel');p.hidden=!p.hidden;$('#connBtn').setAttribute('aria-expanded',!p.hidden)};
+ else if(!B.token){c.textContent='Sign in';n.textContent='Bags server found. Sign in with the owner password, or pair with a one-time code (it expires in 5 minutes).';if(!B.panelShown){B.panelShown=true;$('#profileSheet').hidden=false;$('#profileBtn').setAttribute('aria-expanded','true')}}
+ else{const st=B.provider?.state||'unknown';const named=B.provider?.model?`${B.provider.name} (${B.provider.model})`:(B.provider?.name||'none');c.textContent='Signed in';n.textContent=`Text provider: ${named} (${st}). Session expires ${new Date(B.expires*1000).toLocaleTimeString()}. Personality changes tone only.`}}
+$('#profileBtn').onclick=()=>{const p=$('#profileSheet');p.hidden=!p.hidden;$('#profileBtn').setAttribute('aria-expanded',!p.hidden)};
+$('#profileClose').onclick=()=>hideConn();
 $('#pairForm').onsubmit=async e=>{e.preventDefault();const code=$('#pairCode').value.trim();if(!code)return;
  const r=await fetch(U('api/pair'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});const d=await r.json().catch(()=>({}));$('#pairCode').value='';
  if(!r.ok)return sys('Pairing failed: '+(d.error||r.status)+'. Ask your server for a fresh code.');
@@ -64,7 +65,7 @@ function tree(){const row=a=>`<button class="agent" data-id="${esc(a.id)}"><b>${
  const parts=$('#mParts');if(parts)parts.innerHTML=people.map(a=>`<label><input type="checkbox" value="${esc(a.id)}" ${a.id==people[0].id?'checked disabled':''}> ${esc(a.name)} <span class="note">${esc(a.role)}</span></label>`).join('')}
 const P={name:ORG.personal.name,short:ORG.personal.short||ORG.personal.name};let agent={...ORG.personal},logs={};
 async function pick(a){stopLive();if(B.mode=='server'&&B.token){const r=await http(`api/agents/${encodeURIComponent(a.id)}/session`,{method:'POST',body:{}});if(r.ok){B.token=r.data.token;openWS()}}
- agent=a;$('#agentHdr').textContent=a.name+' · '+a.role+(a.live?'':' (disconnected)');$('#msg').disabled=!a.live;$('#msg').placeholder=a.live?'Message '+a.name:a.name+' is disconnected';render();go('chat')}
+ agent=a;$('#msg').disabled=!a.live;$('#msg').placeholder=a.live?'Message '+a.name:a.name+' is disconnected';render();go('chat')}
 
 /* ================= bottom tab bar ================= */
 function go(tab){document.querySelectorAll('.tabbar button').forEach(b=>{const on=b.dataset.tab==tab;b.classList.toggle('on',on);on?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current')});
@@ -152,7 +153,7 @@ $('#composer').onsubmit=e=>{e.preventDefault();const typed=$('#msg').value;windo
 /* ================= voice conversation ================= */
 const tts=window.speechSynthesis;const live={on:false,rec:null,speaking:false};
 function paintOrb(){const state=window.voiceOrbState(voiceSession);document.body.classList.toggle('voice-on',!!voiceSession.active);const el=$('#voiceOrb');if(el){el.dataset.state=state;el.setAttribute('aria-label','Voice orb, '+state+'. Triple-tap to change the accent colour.')}const s=$('#orbStatus');if(s)s.textContent=state;if(voiceSession.active&&agent.live)$('#msg').disabled=false}
-function applyPersonality(p){p=['cynical','precise','warm'].includes(p)?p:'cynical';localStorage.valetPersonality=p;const s=$('#personality');if(s&&s.value!==p)s.value=p;const prov=$('#provider');if(prov)prov.textContent=(voiceSession.active?'Live':B.mode=='mock'?'Text on this device':'Text')+' · '+p}
+function applyPersonality(p){p=['cynical','precise','warm'].includes(p)?p:'cynical';localStorage.valetPersonality=p;const s=$('#personality');if(s&&s.value!==p)s.value=p}
 let accent=parseInt(localStorage.valetAccent||'0',10)||0;
 function applyAccent(i){accent=((i%4)+4)%4;localStorage.valetAccent=String(accent);document.documentElement.dataset.accent=['brass','cyan','violet','clay'][accent]}
 applyAccent(accent);
@@ -262,7 +263,6 @@ function renderCalls(){calls.forEach(c=>c.seen=true);saveCalls();$('#callBadge')
 $('#simCall').onclick=()=>setTimeout(()=>incoming({from:ORG.personal.id,source:'local'}),600);
 
 /* ================= boot: plain chat, greeting, nothing live ================= */
-$('#agentHdr').textContent=P.name+' · '+ORG.personal.role;
 applyPersonality(currentPersonality());
 tree();paintLive();paintOrb();
 detect().then(()=>{greetIfEmpty();if(B.mode=='mock')mockApi('events?after=0').then(r=>cursor=r.data.next_cursor||0)});
