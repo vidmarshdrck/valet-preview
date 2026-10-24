@@ -60,7 +60,25 @@ export function openDb(file) {
       payload TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
+  const columns = db.prepare('PRAGMA table_info(messages)').all();
+  if (!columns.some((column) => column.name === 'conversation_id')) {
+    db.exec('ALTER TABLE messages ADD COLUMN conversation_id TEXT');
+  }
+  const loose = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id IS NULL OR conversation_id = ''").get();
+  if (loose.n > 0) {
+    const now = Date.now();
+    const first = db.prepare("SELECT text, created_at FROM messages WHERE role = 'user' ORDER BY id LIMIT 1").get();
+    const title = first && String(first.text).trim() ? String(first.text).trim().slice(0, 80) : 'Earlier chat';
+    db.prepare('INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run('earlier', title, first?.created_at || now, now);
+    db.prepare("UPDATE messages SET conversation_id = 'earlier' WHERE conversation_id IS NULL OR conversation_id = ''").run();
+  }
   return db;
 }
 
@@ -69,6 +87,7 @@ export function wipeOwnerData(db) {
     DELETE FROM sessions;
     DELETE FROM pair_codes;
     DELETE FROM messages;
+    DELETE FROM conversations;
     DELETE FROM meeting_entries;
     DELETE FROM meetings;
     DELETE FROM tasks;

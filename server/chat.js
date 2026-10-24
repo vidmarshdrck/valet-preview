@@ -57,5 +57,10 @@ export async function completeTurn({ text, personality, history, env, fetchImpl,
 export function providerStatus(env) {
   const key = env?.VALET_LLM_API_KEY || '';
   if (!key) return { name: 'local-butler', state: 'ready', capabilities: { text: true, voice: false } };
-  return { name: 'openai-compatible', state: 'ready', capabilities: { text: true, voice: false } };
+  return {
+    name: 'openai-compatible',
+    model: env.VALET_LLM_MODEL || 'gpt-4o-mini',
+    state: 'ready',
+    capabilities: { text: true, voice: false },
+  };
 }

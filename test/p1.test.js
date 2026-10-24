@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { start } from '../server/index.js';
 import { localReply, systemPrompt, BUTLER_ID } from '../server/personalities.js';
+import { providerStatus } from '../server/chat.js';
 import { resetRateLimit } from '../server/auth.js';
 
 const PASSWORD = 'correct-horse-battery';
@@ -43,7 +44,7 @@ async function login(base, password = PASSWORD, personality) {
   return { res, data };
 }
 
-function talk(base, token, text) {
+function talk(base, token, text, conversationId) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(base.replace(/^http/, 'ws') + '/api/live');
     const frames = [];
@@ -52,7 +53,7 @@ function talk(base, token, text) {
     ws.addEventListener('message', (ev) => {
       const msg = JSON.parse(ev.data);
       frames.push(msg);
-      if (msg.type === 'ready') ws.send(JSON.stringify({ type: 'text', text }));
+      if (msg.type === 'ready') ws.send(JSON.stringify({ type: 'text', text, conversation_id: conversationId || '' }));
       if (msg.type === 'turn.complete' || msg.type === 'error') {
         clearTimeout(timer);
         ws.close();
@@ -71,7 +72,9 @@ test('health names one butler and does not require a model', async () => {
     assert.equal(health.auth, 'password');
     assert.equal(health.agent.id, BUTLER_ID);
     assert.equal(health.provider.name, 'local-butler');
+    assert.equal(health.provider.model, undefined);
     assert.equal(health.provider.capabilities.voice, false);
+    assert.equal(JSON.stringify(health).toLowerCase().includes('connected to openai'), false);
     const page = await fetch(`${ctx.base}/`);
     assert.equal(page.status, 200);
     assert.match(await page.text(), /id="loginForm"/);
@@ -117,6 +120,36 @@ test('Bags replies in text and the history survives a new session', async () => 
     const recalled = await talk(ctx.base, again.data.token, 'What did I say earlier?');
     assert.match(recalled.find((f) => f.type === 'text').text, /quarterly numbers/);
   } finally { await ctx.stop(); }
+});
+
+test('past chats stay listed and a new chat does not replace them', async () => {
+  const ctx = await boot();
+  try {
+    const session = await login(ctx.base);
+    const headers = { Authorization: `Bearer ${session.data.token}`, 'Content-Type': 'application/json' };
+    await talk(ctx.base, session.data.token, 'The blue folder');
+    const created = await fetch(`${ctx.base}/api/conversations`, { method: 'POST', headers });
+    assert.equal(created.status, 201);
+    const fresh = await created.json();
+    await talk(ctx.base, session.data.token, 'A different matter', fresh.id);
+    const listed = await (await fetch(`${ctx.base}/api/conversations`, { headers })).json();
+    assert.equal(listed.conversations.length, 2);
+    const older = listed.conversations.find((item) => item.preview.includes('blue folder'));
+    assert.ok(older);
+    const opened = await (await fetch(`${ctx.base}/api/messages?conversation=${older.id}`, { headers })).json();
+    assert.match(opened.messages.map((m) => m.text).join('\n'), /blue folder/);
+    assert.equal(opened.messages.some((m) => /different matter/.test(m.text)), false);
+  } finally { await ctx.stop(); }
+});
+
+test('a model key names the provider and does not claim a connection by itself', () => {
+  const quiet = providerStatus({});
+  assert.equal(quiet.name, 'local-butler');
+  assert.equal(quiet.model, undefined);
+  const named = providerStatus({ VALET_LLM_API_KEY: 'present', VALET_LLM_MODEL: 'gpt-4o-mini' });
+  assert.equal(named.name, 'openai-compatible');
+  assert.equal(named.model, 'gpt-4o-mini');
+  assert.equal(JSON.stringify(named).toLowerCase().includes('connected to openai'), false);
 });
 
 test('personality does not change permissions', async () => {

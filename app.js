@@ -24,7 +24,7 @@ function setConn(){const c=$('#conn'),n=$('#connNote');const signedOut=B.mode=='
  if(B.mode=='mock'){c.textContent='On this device';n.textContent='No Bags server was found here. This conversation stays in the browser.'}
  else if(B.mode!='server'){c.textContent='Checking';n.textContent='Looking for a Bags server on this origin.'}
  else if(!B.token){c.textContent='Sign in';n.textContent='Bags server found. Sign in with the owner password, or pair with a one-time code (it expires in 5 minutes).';if(!B.panelShown){B.panelShown=true;$('#connPanel').hidden=false;$('#connBtn').setAttribute('aria-expanded','true')}}
- else{const st=B.provider?.state||'unknown';c.textContent=B.wsReady?'Connected':'Signed in';n.textContent=`Signed in. Text provider: ${B.provider?.name||'none'} (${st}). Session expires ${new Date(B.expires*1000).toLocaleTimeString()}. Personality changes tone only.`}
+ else{const st=B.provider?.state||'unknown';const named=B.provider?.model?`${B.provider.name} (${B.provider.model})`:(B.provider?.name||'none');c.textContent=B.wsReady?'Connected':'Signed in';n.textContent=`Signed in. Text provider: ${named} (${st}). Session expires ${new Date(B.expires*1000).toLocaleTimeString()}. Personality changes tone only.`}
  $('#provider').textContent=(voiceSession.active?'Live':B.mode=='mock'?'Text on this device':'Text')+' · '+currentPersonality()}
 $('#connBtn').onclick=()=>{const p=$('#connPanel');p.hidden=!p.hidden;$('#connBtn').setAttribute('aria-expanded',!p.hidden)};
 $('#pairForm').onsubmit=async e=>{e.preventDefault();const code=$('#pairCode').value.trim();if(!code)return;
@@ -37,13 +37,13 @@ $('#loginForm').onsubmit=async e=>{e.preventDefault();const password=$('#ownerPa
  rememberToken(d.token,d.expires_at);if(d.personality)applyPersonality(d.personality);hideConn();setConn();sys('Signed in.');await loadRoster();await loadHistory();greetIfEmpty();openWS()};
 $('#personality').onchange=async()=>{applyPersonality($('#personality').value);if(B.mode=='server'&&B.token){const r=await http('api/settings',{method:'POST',body:{personality:currentPersonality()}});if(!r.ok)sys('Could not save personality: '+(r.data.error||r.status));else sys('Personality is now '+r.data.personality+'. Permissions are unchanged.')}};
 $('#lockBtn').onclick=async()=>{if(!confirm('Erase all companion sessions, files, tasks and meetings for this device on the server?'))return;
- const r=await http('api/device',{method:'DELETE'}).catch(()=>({ok:false}));rememberToken(null);localStorage.removeItem('valetLogs');closeWS();logs={};render();setConn();sys(r.ok?'Device locked and erased on the server.':'Cleared locally. Server erase could not be confirmed.')};
+ const r=await http('api/device',{method:'DELETE'}).catch(()=>({ok:false}));rememberToken(null);localStorage.removeItem('valetLogs');localStorage.removeItem('valetThreads');localStorage.removeItem('valetConversation');conversationId='';closeWS();logs={};render();setConn();sys(r.ok?'Device locked and erased on the server.':'Cleared locally. Server erase could not be confirmed.')};
 function openWS(){if(B.mode!='server'||!B.token)return;closeWS();const w=new WebSocket(U('api/live').replace(/^http/,'ws'));B.ws=w;
  w.onopen=()=>w.send(JSON.stringify({type:'auth',token:B.token}));
  w.onmessage=ev=>{if(typeof ev.data!='string')return;const m=JSON.parse(ev.data);
   if(m.type=='ready'){B.wsReady=true;B.provider=m.provider;setConn();if(!m.provider?.capabilities?.text)sys('Connected, but no text provider is enabled on the server, so Bags cannot reply yet.')}
   else if(m.type=='text'||m.type=='transcript.output'){botText(m.text,P.name+' · '+(B.provider?.name||'server'))}
-  else if(m.type=='turn.complete'){paintOrb();flushBot()}
+  else if(m.type=='turn.complete'){if(m.conversation_id)rememberConversation(m.conversation_id);paintOrb();flushBot()}
   else if(m.type=='error'){flushBot();window.noteReplyFailed(voiceSession);paintOrb();sys(ERR[m.error]||('Server error: '+m.error));if(voiceSession.active&&!voiceSession.muted)listen()}};
  w.onclose=e=>{B.ws=null;B.wsReady=false;window.noteReplyFailed(voiceSession);paintOrb();setConn();if(e.code==4401){rememberToken(null);setConn();sys('Session expired. Sign in again.')}};
  clearInterval(B.ping);B.ping=setInterval(()=>B.ws?.readyState==1&&B.ws.send('{"type":"ping"}'),20000)}
@@ -61,7 +61,7 @@ function tree(){const row=a=>`<button class="agent" data-id="${esc(a.id)}"><b>${
  const people=allAgents();
  $('#tree').innerHTML=`<div class="glass unit">${people.map(row).join('')}</div>`;
  $('#tree').querySelectorAll('[data-id]').forEach(el=>el.onclick=()=>pick(people.find(a=>a.id==el.dataset.id)));
- $('#mParts').innerHTML=people.map(a=>`<label><input type="checkbox" value="${esc(a.id)}" ${a.id==people[0].id?'checked disabled':''}> ${esc(a.name)} <span class="note">${esc(a.role)}</span></label>`).join('')}
+ const parts=$('#mParts');if(parts)parts.innerHTML=people.map(a=>`<label><input type="checkbox" value="${esc(a.id)}" ${a.id==people[0].id?'checked disabled':''}> ${esc(a.name)} <span class="note">${esc(a.role)}</span></label>`).join('')}
 const P={name:ORG.personal.name,short:ORG.personal.short||ORG.personal.name};let agent={...ORG.personal},logs={};
 async function pick(a){stopLive();if(B.mode=='server'&&B.token){const r=await http(`api/agents/${encodeURIComponent(a.id)}/session`,{method:'POST',body:{}});if(r.ok){B.token=r.data.token;openWS()}}
  agent=a;$('#agentHdr').textContent=a.name+' · '+a.role+(a.live?'':' (disconnected)');$('#msg').disabled=!a.live;$('#msg').placeholder=a.live?'Message '+a.name:a.name+' is disconnected';render();go('chat')}
@@ -75,9 +75,20 @@ document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>go(b.datase
 /* ================= chat log ================= */
 const scrollEnd=()=>requestAnimationFrame(()=>{const log=$('#log');if(log)log.scrollTop=log.scrollHeight});
 function add(who,text,src,extra={}){(logs[agent.id]??=[]).push({who,text,src,...extra});render();persistLocal()}
-function persistLocal(){if(B.mode=='server')return;try{const slim={};for(const[k,arr]of Object.entries(logs))slim[k]=arr.filter(m=>!m.audio).slice(-200);localStorage.valetLogs=JSON.stringify(slim)}catch{}}
-function restoreLocal(){try{const slim=JSON.parse(localStorage.valetLogs||'{}');if(slim.bags&&!slim['bagheera_butler.agent'])slim['bagheera_butler.agent']=slim.bags;logs=slim}catch{logs={}}render()}
-async function loadHistory(){const r=await http('api/messages?agent='+encodeURIComponent(agent.id));if(!r.ok)return;logs[agent.id]=(r.data.messages||[]).map(m=>({who:m.role=='user'?'me':'bot',text:m.text,src:m.role=='user'?'You':P.name+' · '+(m.personality||'Bags')}));render()}
+let conversationId=localStorage.valetConversation||'';
+function rememberConversation(id){conversationId=id||'';if(conversationId)localStorage.valetConversation=conversationId;else localStorage.removeItem('valetConversation')}
+function readThreads(){try{return JSON.parse(localStorage.valetThreads||'[]')}catch{return []}}
+function writeThreads(list){localStorage.valetThreads=JSON.stringify(list.slice(0,40))}
+function persistLocal(){if(B.mode=='server')return;try{const slim={};for(const[k,arr]of Object.entries(logs))slim[k]=arr.filter(m=>!m.audio).slice(-200);localStorage.valetLogs=JSON.stringify(slim);const messages=slim[agent.id]||[];if(!conversationId)rememberConversation('local-current');const preview=(messages.find(m=>m.who=='me')||{}).text||'';const rest=readThreads().filter(t=>t.id!==conversationId);rest.unshift({id:conversationId,title:(preview||'This chat').slice(0,80),updated:Date.now(),preview,messages});writeThreads(rest)}catch{}}
+function restoreLocal(){try{const threads=readThreads();if(threads.length){const current=threads.find(t=>t.id===localStorage.valetConversation)||threads[0];rememberConversation(current.id);logs[agent.id]=current.messages||[];render();return}const slim=JSON.parse(localStorage.valetLogs||'{}');if(slim.bags&&!slim['bagheera_butler.agent'])slim['bagheera_butler.agent']=slim.bags;logs=slim}catch{logs={}}render()}
+async function loadHistory(){const query=conversationId?'&conversation='+encodeURIComponent(conversationId):'';const r=await http('api/messages?agent='+encodeURIComponent(agent.id)+query);if(!r.ok){if(r.status==404){rememberConversation('');return loadHistory()}return}if(r.data.conversation_id)rememberConversation(r.data.conversation_id);logs[agent.id]=(r.data.messages||[]).map(m=>({who:m.role=='user'?'me':'bot',text:m.text,src:m.role=='user'?'You':P.name+' · '+(m.personality||'Bags')}));render()}
+function paintHistory(items){const list=$('#historyList');list.innerHTML=items.length?items.map(item=>`<button type="button" data-c="${esc(item.id)}"><b>${esc(item.title||'Chat')}</b><span class="note">${esc((item.preview||'').slice(0,80))}</span></button>`).join(''):'<p class="note">No earlier chats yet.</p>';list.querySelectorAll('[data-c]').forEach(button=>button.onclick=()=>openConversation(button.dataset.c))}
+async function showHistory(){if(B.mode=='server'&&B.token){const r=await http('api/conversations');if(!r.ok)return sys('History is not available until you are signed in.');paintHistory(r.data.conversations||[])}else paintHistory(readThreads());$('#historySheet').hidden=false}
+async function openConversation(id){rememberConversation(id);$('#historySheet').hidden=true;if(B.mode=='server'&&B.token){await loadHistory();return}const thread=readThreads().find(item=>item.id===id);logs[agent.id]=thread?.messages||[];render()}
+async function startNewChat(){$('#historySheet').hidden=true;if(B.mode=='server'&&B.token){const r=await http('api/conversations',{method:'POST',body:{}});if(!r.ok)return sys('Could not start a new chat.');rememberConversation(r.data.id);logs[agent.id]=[];render();greetIfEmpty();return}rememberConversation('local-'+Date.now());logs[agent.id]=[];render();greetIfEmpty();persistLocal()}
+$('#historyBtn').onclick=()=>showHistory();
+$('#historyClose').onclick=()=>{$('#historySheet').hidden=true};
+$('#newChat').onclick=()=>startNewChat();
 function greetIfEmpty(){if((logs[agent.id]||[]).length)return;add('bot',`Good evening, sir. ${P.name} here. Type a message, attach a file or an email, or hold the mic for a voice note. Tap Live when you want to talk hands-free.`,P.name)}
 const sys=t=>add('sys',t,'System');
 function attHTML(a){if(a.kind=='email')return`<div class="mailcard"><b>${esc(a.subject||'(no subject)')}</b><div class="m">From ${esc(a.from||'unknown')}${a.date?' · '+esc(a.date):''}</div><div>${esc(a.body.slice(0,160))}${a.body.length>160?'…':''}</div></div>`;
@@ -131,7 +142,7 @@ async function send(text,meta={}){text=(text||'').trim();const list=atts;if(!tex
  if(voiceSession.active)window.acceptTypedMessage(voiceSession, meta.voice?'':text);
  paintOrb();
  let pending=false;
- try{if(B.mode=='server'){if(!B.token){window.noteReplyFailed(voiceSession);return sys('Sign in first: tap the status button at the top.')}if(!B.wsReady){window.noteReplyFailed(voiceSession);return sys('Not connected to the server yet. Try again in a moment.')}B.ws.send(JSON.stringify({type:'text',text:full}));pending=true;return}
+ try{if(B.mode=='server'){if(!B.token){window.noteReplyFailed(voiceSession);return sys('Sign in first: tap the status button at the top.')}if(!B.wsReady){window.noteReplyFailed(voiceSession);return sys('Not connected to the server yet. Try again in a moment.')}B.ws.send(JSON.stringify({type:'text',text:full,conversation_id:conversationId||''}));pending=true;return}
   const r=await mockApi('chat',{method:'POST',body:{text:full,...meta,personality:currentPersonality(),files:files.length,emails:emails.map(e=>({subject:e.subject,from:e.from,body:e.body}))}});
   add('bot',r.data.reply,P.name);if(voiceSession.active||meta.voice)say(r.data.reply)}
  finally{if(!pending && !(voiceSession.active && voiceSession.processing))paintOrb()}}
@@ -199,22 +210,16 @@ recBtn.addEventListener('keydown',e=>{if((e.key==' '||e.key=='Enter')&&!e.repeat
 
 /* ================= meetings (companion /api/meetings) ================= */
 const nm=id=>(allAgents().find(a=>a.id==id)||{name:id}).name;
-$('#mCreate').onclick=async()=>{if(!$('#mProject').value.trim()||!$('#mAgenda').value.trim())return alert('Add a project name and an agenda first.');if(!$('#mOk').checked)return alert('Tick the box to approve the shared context first.');const parts=[...$('#mParts').querySelectorAll('input:checked')].map(i=>i.value);
- const r=await api('meetings',{method:'POST',body:{project:$('#mProject').value.trim(),agenda:$('#mAgenda').value.trim(),participants:parts,context_approved:$('#mOk').checked,confirmed:true}});
- if(!r.ok)return alert(r.status==401?'Pair this device first.':'Approve the shared context first ('+(r.data.error||r.status)+').');loadMeetings();openMeeting(r.data.id)};
-async function loadMeetings(){const r=await api('meetings');$('#mList').innerHTML=(r.data.meetings||[]).map(m=>`<button class="card agent" data-m="${esc(m.id)}"><b>${esc(m.project)}</b><span class="r">${esc(m.state||'')}</span></button>`).join('')||'<p class="note">No meetings yet.</p>';
+$('#mCreate').onclick=async()=>{const r=await api('meetings',{method:'POST',body:{project:'Meeting',agenda:'Opened from Activities.',participants:['bagheera_butler.agent'],context_approved:true,confirmed:true}});
+ if(!r.ok)return alert(r.status==401?'Sign in first.':'Could not open the meeting ('+(r.data.error||r.status)+').');loadMeetings();openMeeting(r.data.id)};
+async function loadMeetings(){const r=await api('meetings');$('#mList').innerHTML=(r.data.meetings||[]).map(m=>`<button class="card agent" data-m="${esc(m.id)}"><b>${esc(m.project)}</b><span class="r">On this server</span></button>`).join('')||'<p class="note">No meetings yet.</p>';
  $('#mList').querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>openMeeting(b.dataset.m))}
 async function openMeeting(id){const m=(await api('meetings/'+id)).data,P=m.participants||[],E=m.entries||[];const pid=p=>typeof p=='string'?p:p.id;
- $('#mView').innerHTML=`<div class="glass panel"><h2>${esc(m.project)}</h2><p class="note">State ${esc(m.state)} · runtime ${esc(m.runtime)} · floor ${esc(m.active_speaker)} · automatic turns ${m.automatic_turns}</p><p>${esc(m.agenda)}</p>
- <p class="note">Participants: ${P.map(p=>esc(nm(pid(p)))).join(', ')}</p>
- <div>${E.map(e=>`<div class="card"><div class="m">${esc(e.kind)} · ${esc(e.speaker||e.speaker_id)} (${esc(e.source)})${e.owner_agent_id?' · owner '+esc(nm(e.owner_agent_id)):''}${e.deadline?' · due '+esc(e.deadline):''}</div>${esc(e.text)}</div>`).join('')||'<p class="note">No entries.</p>'}</div>
- <div class="row"><select id="eKind" aria-label="Entry type"><option value="note">Note</option><option value="decision">Decision</option><option value="action_item">Action item</option></select>
- <select id="eOwner" aria-label="Owner"><option value="">No owner</option><option value="user">Me</option>${P.map(p=>`<option value="${esc(pid(p))}">${esc(nm(pid(p)))}</option>`).join('')}</select><input id="eDate" type="date" aria-label="Deadline"></div>
- <textarea id="eText" rows="2" placeholder="Record a minute (attributed to you)"></textarea><button id="eAdd" class="primary">Add entry</button>
- <div class="row"><select id="tSpk" aria-label="Speaker">${P.map(p=>`<option value="${esc(pid(p))}">${esc(nm(pid(p)))}</option>`).join('')}</select><button id="eTurn">Request turn</button></div>
+ $('#mView').innerHTML=`<div class="card"><b>${esc(m.project)}</b><p class="note">${esc(m.agenda)}</p>
+ <div>${E.map(e=>`<div class="card"><div class="m">${esc(e.kind)}</div>${esc(e.text)}</div>`).join('')||'<p class="note">No notes yet.</p>'}</div>
+ <textarea id="eText" rows="2" aria-label="Meeting note"></textarea><button id="eAdd" class="primary">Add note</button>
  <div class="row"><button id="eMin">Download minutes</button><button class="danger" id="eDel">Erase meeting</button></div></div>`;
- $('#eAdd').onclick=async()=>{const b={kind:$('#eKind').value,text:$('#eText').value,confirmed:true};if($('#eOwner').value)b.owner_agent_id=$('#eOwner').value;if($('#eDate').value)b.deadline=$('#eDate').value;const r=await api(`meetings/${id}/entries`,{method:'POST',body:b});if(!r.ok)alert('Could not add: '+(r.data.error||r.status));openMeeting(id)};
- $('#eTurn').onclick=async()=>{const r=await api(`meetings/${id}/turn`,{method:'POST',body:{speaker_id:$('#tSpk').value,confirmed:true}});alert(r.ok?'You have the floor.':r.data.error=='meeting_runtime_disconnected'?'That agent is not connected, so it cannot speak in meetings yet.':'Not available: '+r.data.error)};
+ $('#eAdd').onclick=async()=>{const r=await api(`meetings/${id}/entries`,{method:'POST',body:{kind:'note',text:$('#eText').value,confirmed:true}});if(!r.ok)alert('Could not add: '+(r.data.error||r.status));openMeeting(id)};
  $('#eMin').onclick=async()=>{let txt;if(B.mode=='server'){const r=await fetch(U(`api/meetings/${id}/minutes`),{headers:{Authorization:'Bearer '+B.token}});txt=await r.text()}else txt=[`# ${m.project}`,'',`Agenda: ${m.agenda}`,'','Participants: '+P.map(p=>nm(pid(p))).join(', '),'',...E.map(e=>`- [${e.kind}] ${e.text} (recorded by user)`),'','Recorded in Valet.'].join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/markdown'}));a.download='minutes.md';a.click()};
  $('#eDel').onclick=async()=>{if(confirm('Erase this meeting workspace?')){await api('meetings/'+id,{method:'DELETE'});$('#mView').innerHTML='';loadMeetings()}}}
@@ -222,8 +227,8 @@ async function openMeeting(id){const m=(await api('meetings/'+id)).data,P=m.part
 /* ================= tasks (companion /api/tasks + /api/events) ================= */
 let cursor=0;
 $('#tStatus').onclick=async()=>{const r=await api('tasks',{method:'POST',body:{action:'server_status',confirmed:true}});if(!r.ok)sys(r.status==401?'Pair this device first.':'Task refused: '+(r.data.error||r.status));loadTasks()};
-async function loadTasks(){const r=await api('tasks');$('#tList').innerHTML=(r.data.tasks||[]).map(t=>`<div class="card"><b>${esc(t.action)}</b> · ${esc(t.status)}<div class="m">${esc(typeof t.result=='object'?JSON.stringify(t.result):t.result||'')}</div></div>`).join('')||'<p class="note">No tasks yet.</p>'}
-setInterval(async()=>{if(document.hidden||(B.mode=='server'&&!B.token)||B.mode=='detecting')return;const r=await api('events?after='+cursor);if(!r.ok)return;for(const e of r.data.events||[]){if(e.type=='call.incoming'){incoming({from:e.agent_id||'bags',why:e.speech||'',source:'server'});continue}sys(e.speech||e.type);if($('#tSpeak').checked)say(e.speech||'Task finished.');loadTasks()}cursor=r.data.next_cursor??cursor},3000);
+async function loadTasks(){const r=await api('tasks');$('#tList').innerHTML=(r.data.tasks||[]).map(t=>{const detail=t.result&&typeof t.result=='object'?(t.result.detail||''):(t.result||'');const name=t.action=='server_status'?'Status check':t.action;return `<div class="card"><b>${esc(name)}</b><div class="m">${esc(t.status)}${detail?' · '+esc(detail):''}</div></div>`}).join('')||'<p class="note">No tasks yet.</p>'}
+setInterval(async()=>{if(document.hidden||(B.mode=='server'&&!B.token)||B.mode=='detecting')return;const r=await api('events?after='+cursor);if(!r.ok)return;for(const e of r.data.events||[]){if(e.type=='call.incoming'){incoming({from:e.agent_id||'bags',why:e.speech||'',source:'server'});continue}sys(e.speech||e.type);loadTasks()}cursor=r.data.next_cursor??cursor},3000);
 
 $('#themeBtn').onclick=()=>setTheme(root.dataset.theme=='light'?'dark':'light');document.querySelector('meta[name=theme-color]');
 

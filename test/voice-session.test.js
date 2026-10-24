@@ -93,6 +93,11 @@ test('the phone header, Live control, and deploy files match this build', () => 
   assert.match(panel, /id="personality"/);
   assert.match(panel, /id="lockBtn"/);
   assert.match(html, /id="liveLbl">Live</);
+  assert.match(html, /<span>Chat<\/span>/);
+  assert.equal(/<span>Talk<\/span>/.test(html), false);
+  assert.match(html, /id="historyBtn"/);
+  assert.match(html, /id="mCreate"[^>]*>Open meeting/);
+  assert.equal(/id="mProject"|id="mOk"|id="tSpeak"/.test(html), false);
   assert.match(html, /id="composer" class="glass dock"/);
   const activities = html.match(/<button data-tab="act"[^>]*>/);
   assert.ok(activities);
