@@ -1,0 +1,17 @@
+{
+  "name": "valet",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "build": "node server/build.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/p1.test.js",
+    "pair-code": "node server/pair-code.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
