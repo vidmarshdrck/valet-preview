@@ -2,12 +2,12 @@
 /** Voice-orb shell. State is display-only and never changes permissions. */
 function orbState(s) {
   const x = s || {};
-  if (x.error) return 'error';
-  if (x.processing) return 'processing';
-  if (x.muted) return 'muted';
-  if (x.speaking) return 'speaking';
-  if (x.listening) return 'listening';
-  return 'idle';
+  if (x.error) return 'ERROR';
+  if (x.muted) return 'MUTED';
+  if (x.processing) return 'PROCESSING';
+  if (x.speaking) return 'SPEAKING';
+  if (x.listening) return 'LISTENING';
+  return 'IDLE';
 }
 const ACCENT_COUNT = 4;
 function cycleAccent(index) {

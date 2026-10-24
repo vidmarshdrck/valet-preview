@@ -2,7 +2,7 @@
 
 Mobile command centre for **Bags** (Bagheera), butler to Shadrick Vidmar. This repository is the app. It is not a second Bags agent.
 
-Open the site, sign in, and talk to Bags in text. The conversation is stored on the server. The phone UI is a dark, installable PWA.
+Open the site, sign in, and talk to Bags in text or by voice. The conversation is stored on the server. The phone UI is a dark, installable PWA.
 
 ## What works in this build
 
@@ -13,15 +13,15 @@ Open the site, sign in, and talk to Bags in text. The conversation is stored on 
 - With no model key, a local butler replies. It can recall earlier lines in the chat. It cannot send mail, call agents, or finish tasks, and it says so.
 - With `VALET_LLM_API_KEY`, replies come from an OpenAI-compatible chat API. If that call fails, Valet reports the failure and does not invent a successful answer.
 - Meetings and status checks stay on this server. A status check reports that Paperclip and PMS are not linked. Approval flags are checked on the server.
-- Voice-orb states (idle, listening, processing, speaking, muted, error) follow the existing browser speech controls. Triple-tap the orb to change the accent. Mute silences speech. This was not tested on a phone microphone.
+- Live (centre button) starts and stops a browser voice session with Bags. The glass orb shows IDLE, LISTENING, PROCESSING, SPEAKING, MUTED, or ERROR from that lifecycle. Triple-tap the orb to change the accent. The composer stays usable while Live is on; a typed line joins the same transcript. Mute, theme, personality, and lock sit in the connection panel. Chrome on this machine reached LISTENING, PROCESSING, MUTED, and ERROR with the real speech recognizer. SPEAKING is wired for when the browser has a speech voice; this Chrome had none, so replies stayed on screen. No phone microphone, phone speaker, or Android device was used.
 
 ## What this build does not do
 
 - It was not deployed. There is no production URL from this work.
 - It was not installed or tested on an Android device.
-- `vidmarholdings` was not readable with the available GitHub credentials (the API returned 404), so Aaron, Nehemiah, Solomon, Paperclip, and PMS were not wired. Placeholder names in the Agents tab stay disconnected.
+- `vidmarholdings` was not readable with the available GitHub credentials (the API returned 404), so Aaron, Nehemiah, Solomon, Paperclip, and PMS are not connected. The Agents tab lists Bags only.
 - `Bags-Mark-LIII` is a separate desktop assistant. It was not copied in, and its wake word and voice are not used.
-- No TPPL or other client data. No smart-home controls. No incoming call from a real agent bus — the Calls tab can still simulate one in the browser.
+- No TPPL or other client data. No smart-home controls. No incoming call from a real agent bus. The Calls tab can ring Bags locally in the browser.
 
 ## Run
 
@@ -73,15 +73,50 @@ Do not put the password or the model key in the static site. They are read only 
 
 ## Deploy
 
-Not done in this workspace. A production host needs:
+Not deployed. There is no production URL. A host, a DNS name, and `VALET_OWNER_PASSWORD` are still required. The files below are the path for a Hostinger-style VPS once those exist.
 
-1. Node 22, this repo, `npm install`, and a persistent `VALET_DATA_DIR`.
-2. `VALET_OWNER_PASSWORD` set in the process environment, not in the client.
-3. HTTPS. Android will not install a PWA, and the microphone will not start, on plain HTTP except for `localhost`. Either terminate TLS at Caddy or nginx and proxy to `127.0.0.1:8787`, or set `VALET_TLS_KEY` and `VALET_TLS_CERT`.
-4. Serve the app at the site root. The client calls `./health` and `./api/…` relative to the page. A reverse proxy that mounts only `/valet/` while the API stays at `/` will miss the server. Proxy the whole origin.
-5. Restart the process and confirm `GET /health` returns `"protocol": 1` and `"auth": "password"`.
+Serve the app at the site root. The phone calls `./health` and `./api/…` relative to the page, and the live socket is `wss` on that same origin. Proxy the whole site to `127.0.0.1:8787`, including WebSocket upgrade. Do not mount the app under a subpath.
 
-GitHub Pages can still show the static files. That copy has no owner auth and no server history; it uses the in-browser demo and keeps chat in the browser only.
+### systemd (Node 22 already installed)
+
+From the repository root, as root:
+
+```sh
+VALET_OWNER_PASSWORD='choose-10-or-more-characters' ./deploy/install.sh
+```
+
+Optional, when Caddy is already installed and DNS points at this machine:
+
+```sh
+VALET_OWNER_PASSWORD='choose-10-or-more-characters' VALET_DOMAIN='the domain that points here' ./deploy/install.sh
+```
+
+The script checks Node 22, installs dependencies, writes `/etc/valet.env` (mode 600), creates `/var/lib/valet`, installs `deploy/valet.service`, and starts `valet`. It does not print the password. Confirm with:
+
+```sh
+curl -fsS http://127.0.0.1:8787/health
+systemctl status valet
+```
+
+`GET /health` should include `"protocol": 1` and `"auth": "password"`.
+
+If Caddy is absent, the script still starts Valet on localhost and leaves HTTPS to you. `deploy/Caddyfile` and `deploy/nginx-valet.conf` are the proxy snippets. Either one must forward `Upgrade` and `Connection` so the live socket works. Put your certificate paths in the nginx file. Caddy obtains a certificate when the domain resolves to this host and ports 80 and 443 are open.
+
+Direct TLS without a proxy is also possible: set `VALET_TLS_KEY` and `VALET_TLS_CERT` in `/etc/valet.env` and set `VALET_PORT=443`. The proxy path is the one to use on a typical VPS.
+
+### Docker
+
+```sh
+docker build -t valet .
+# .env on the server, not in git. Same keys as .env.example.
+# VALET_HOST=0.0.0.0 is set in the image. Publish only on localhost and proxy HTTPS in front.
+docker compose up -d --build
+curl -fsS http://127.0.0.1:8787/health
+```
+
+The compose file stores SQLite in the `valet-data` volume, mounted at `/var/lib/valet`.
+
+GitHub Pages can still show the static files. That copy has no owner auth and no server history; chat stays in the browser only.
 
 ## Install on Android
 
@@ -100,9 +135,10 @@ The manifest and service worker are `manifest.webmanifest` and `sw.js`. Icons ar
 ## Layout of the code
 
 - `index.html`, `app.css`, `app.js` — the existing phone UI, extended with sign-in, history, and the orb.
-- `agents.js` — Bags's id is `bagheera_butler.agent`. Other rows are placeholders.
-- `mock.js` — demo replies when no server is reachable.
-- `orb-state.js` — display state for the voice orb.
+- `agents.js` — Bags's id is `bagheera_butler.agent`.
+- `mock.js` — replies on this device when no server is reachable.
+- `voice-session.js` — voice lifecycle. The orb reads it.
+- `orb-state.js` — priority of the orb labels.
 - `server/` — auth, SQLite history, live chat, meetings, and status checks.
 - `test/p1.test.js` — the checks that were actually run with `npm test`.
 

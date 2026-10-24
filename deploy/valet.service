@@ -1,0 +1,21 @@
+[Unit]
+Description=Valet
+After=network.target
+
+[Service]
+Type=simple
+User=valet
+Group=valet
+WorkingDirectory=/opt/valet
+EnvironmentFile=/etc/valet.env
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/valet
+
+[Install]
+WantedBy=multi-user.target

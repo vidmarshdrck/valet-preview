@@ -297,12 +297,13 @@ test('static contract keeps the canonical butler id', () => {
     const orb = { window: {} };
     vm.runInNewContext(readFileSync('orb-state.js','utf8'), orb);
     const samples = [
-      [{}, 'idle'],
-      [{ listening: true }, 'listening'],
-      [{ speaking: true, listening: true }, 'speaking'],
-      [{ muted: true, listening: true }, 'muted'],
-      [{ processing: true, speaking: true }, 'processing'],
-      [{ error: true, processing: true }, 'error'],
+      [{}, 'IDLE'],
+      [{ listening: true }, 'LISTENING'],
+      [{ speaking: true, listening: true }, 'SPEAKING'],
+      [{ muted: true, listening: true }, 'MUTED'],
+      [{ muted: true, processing: true }, 'MUTED'],
+      [{ processing: true, speaking: true }, 'PROCESSING'],
+      [{ error: true, processing: true }, 'ERROR'],
     ];
     for (const [input, expected] of samples) {
       if (orb.window.orbState(input) !== expected) process.exit(5);

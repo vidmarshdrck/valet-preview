@@ -1,0 +1,9 @@
+# Import from the main Caddyfile: `import /etc/caddy/valet.caddy`
+# Replace SITE with the DNS name that points at this machine.
+# Caddy obtains the certificate when ports 80 and 443 reach this host.
+# deploy/install.sh writes this file for you when VALET_DOMAIN is set and Caddy is installed.
+
+SITE {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+}
