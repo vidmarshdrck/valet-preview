@@ -10,42 +10,51 @@ if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
 
 /* ================= backend adapter: companion protocol v1, mock fallback ================= */
 const B={mode:'detecting',token:null,expires:0,provider:null,ws:null,wsReady:false,pending:null};
+function rememberToken(t,exp){B.token=t||null;B.expires=exp||0;if(t)localStorage.valetToken=t;else localStorage.removeItem('valetToken')}
+function currentPersonality(){return ['cynical','precise','warm'].includes(localStorage.valetPersonality)?localStorage.valetPersonality:'cynical'}
 async function http(path,o={}){const h={...(o.headers||{})};if(B.token)h.Authorization='Bearer '+B.token;
  let body=o.body;if(body&&!(body instanceof Blob)&&typeof body!='string'){body=JSON.stringify(body);h['Content-Type']='application/json'}
  const r=await fetch(U(path),{method:o.method||'GET',headers:h,body});const d=await r.json().catch(()=>({}));
- if(r.status==401&&B.token){B.token=null;closeWS();setConn();sys('Session expired. Pair again from the connection panel.')}return{ok:r.ok,status:r.status,data:d}}
+ if(r.status==401&&B.token){rememberToken(null);closeWS();setConn();sys('Session expired. Sign in again from the connection panel.')}return{ok:r.ok,status:r.status,data:d}}
 const api=(p,o={})=>B.mode=='server'?http('api/'+p,o):mockApi(p,o);
-async function detect(){try{const r=await fetch(U('health'),{cache:'no-store'});const d=await r.json();if(d&&d.protocol==1){B.mode='server';B.provider=d.provider;setConn();return}}catch{}B.mode='mock';setConn()}
-function setConn(){const c=$('#conn'),n=$('#connNote');$('#pairForm').hidden=!(B.mode=='server'&&!B.token);$('#lockBtn').hidden=!(B.mode=='server'&&B.token);
- if(B.mode=='mock'){c.textContent='Offline demo';n.textContent='No Bags server found here, so replies come from the built-in demo. Nothing leaves this device.'}
- else if(!B.token){c.textContent='Pair device';n.textContent='Bags server found. Enter the one-time code from your private server to pair (it expires in 5 minutes).'}
- else{const st=B.provider?.state||'unknown';c.textContent=B.wsReady?'Connected':'Paired';n.textContent=`Paired. Text provider: ${B.provider?.name||'none'} (${st}). Session expires ${new Date(B.expires*1000).toLocaleTimeString()}.`}
- $('#provider').textContent=live.on?'Live session on':B.mode=='mock'?'Plain chat · demo':'Plain chat'}
+async function detect(){try{const r=await fetch(U('health'),{cache:'no-store'});const d=await r.json();if(d&&d.protocol==1){B.mode='server';B.provider=d.provider;const saved=localStorage.valetToken;if(saved){B.token=saved;const s=await http('api/session');if(s.ok){B.expires=s.data.expires_at;B.provider=s.data.provider;if(s.data.personality)applyPersonality(s.data.personality);hideConn();setConn();await loadRoster();await loadHistory();openWS();return}rememberToken(null)}setConn();return}}catch{}B.mode='mock';restoreLocal();setConn()}
+function hideConn(){const p=$('#connPanel');if(p)p.hidden=true;$('#connBtn').setAttribute('aria-expanded','false')}
+function setConn(){const c=$('#conn'),n=$('#connNote');const signedOut=B.mode=='server'&&!B.token;$('#loginForm').hidden=!signedOut;$('#pairForm').hidden=!signedOut;$('#lockBtn').hidden=!(B.mode=='server'&&B.token);
+ if(B.mode=='mock'){c.textContent='Offline demo';n.textContent='No Bags server found here, so replies come from the built-in demo and stay in this browser.'}
+ else if(B.mode!='server'){c.textContent='Checking';n.textContent='Looking for a Bags server on this origin.'}
+ else if(!B.token){c.textContent='Sign in';n.textContent='Bags server found. Sign in with the owner password, or pair with a one-time code (it expires in 5 minutes).';if(!B.panelShown){B.panelShown=true;$('#connPanel').hidden=false;$('#connBtn').setAttribute('aria-expanded','true')}}
+ else{const st=B.provider?.state||'unknown';c.textContent=B.wsReady?'Connected':'Signed in';n.textContent=`Signed in. Text provider: ${B.provider?.name||'none'} (${st}). Session expires ${new Date(B.expires*1000).toLocaleTimeString()}. Personality changes tone only.`}
+ $('#provider').textContent=(live.on?'Live session on':B.mode=='mock'?'Plain chat · demo':'Plain chat')+' · '+currentPersonality()}
 $('#connBtn').onclick=()=>{const p=$('#connPanel');p.hidden=!p.hidden;$('#connBtn').setAttribute('aria-expanded',!p.hidden)};
 $('#pairForm').onsubmit=async e=>{e.preventDefault();const code=$('#pairCode').value.trim();if(!code)return;
  const r=await fetch(U('api/pair'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});const d=await r.json().catch(()=>({}));$('#pairCode').value='';
  if(!r.ok)return sys('Pairing failed: '+(d.error||r.status)+'. Ask your server for a fresh code.');
- B.token=d.token;B.expires=d.expires_at;setConn();sys('Device paired. This session is separate from Telegram.');await loadRoster();openWS()};
+ rememberToken(d.token,d.expires_at);hideConn();setConn();sys('Device paired. This session is separate from Telegram.');await loadRoster();await loadHistory();greetIfEmpty();openWS()};
+$('#loginForm').onsubmit=async e=>{e.preventDefault();const password=$('#ownerPassword').value;$('#ownerPassword').value='';if(!password)return;
+ const r=await fetch(U('api/login'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password,personality:currentPersonality()})});const d=await r.json().catch(()=>({}));
+ if(!r.ok)return sys(r.status==429?'Too many sign-in attempts. Wait and try again.':'Sign-in failed: '+(d.error||r.status)+'.');
+ rememberToken(d.token,d.expires_at);if(d.personality)applyPersonality(d.personality);hideConn();setConn();sys('Signed in.');await loadRoster();await loadHistory();greetIfEmpty();openWS()};
+$('#personality').onchange=async()=>{applyPersonality($('#personality').value);if(B.mode=='server'&&B.token){const r=await http('api/settings',{method:'POST',body:{personality:currentPersonality()}});if(!r.ok)sys('Could not save personality: '+(r.data.error||r.status));else sys('Personality is now '+r.data.personality+'. Permissions are unchanged.')}};
 $('#lockBtn').onclick=async()=>{if(!confirm('Erase all companion sessions, files, tasks and meetings for this device on the server?'))return;
- const r=await http('api/device',{method:'DELETE'}).catch(()=>({ok:false}));B.token=null;closeWS();logs={};render();setConn();sys(r.ok?'Device locked and erased on the server.':'Cleared locally. Server erase could not be confirmed.')};
+ const r=await http('api/device',{method:'DELETE'}).catch(()=>({ok:false}));rememberToken(null);localStorage.removeItem('valetLogs');closeWS();logs={};render();setConn();sys(r.ok?'Device locked and erased on the server.':'Cleared locally. Server erase could not be confirmed.')};
 function openWS(){if(B.mode!='server'||!B.token)return;closeWS();const w=new WebSocket(U('api/live').replace(/^http/,'ws'));B.ws=w;
  w.onopen=()=>w.send(JSON.stringify({type:'auth',token:B.token}));
  w.onmessage=ev=>{if(typeof ev.data!='string')return;const m=JSON.parse(ev.data);
   if(m.type=='ready'){B.wsReady=true;B.provider=m.provider;setConn();if(!m.provider?.capabilities?.text)sys('Connected, but no text provider is enabled on the server, so Bags cannot reply yet.')}
   else if(m.type=='text'||m.type=='transcript.output'){botText(m.text,P.name+' · '+(B.provider?.name||'server'))}
-  else if(m.type=='turn.complete'){flushBot()}
-  else if(m.type=='error'){flushBot();sys(ERR[m.error]||('Server error: '+m.error))}};
- w.onclose=e=>{B.ws=null;B.wsReady=false;setConn();if(e.code==4401){B.token=null;setConn();sys('Session expired. Pair again.')}};
+  else if(m.type=='turn.complete'){shell.processing=false;paintOrb();flushBot()}
+  else if(m.type=='error'){flushBot();shell.processing=false;shell.error=true;paintOrb();setTimeout(()=>{shell.error=false;paintOrb()},2500);sys(ERR[m.error]||('Server error: '+m.error))}};
+ w.onclose=e=>{B.ws=null;B.wsReady=false;shell.processing=false;paintOrb();setConn();if(e.code==4401){rememberToken(null);setConn();sys('Session expired. Sign in again.')}};
  clearInterval(B.ping);B.ping=setInterval(()=>B.ws?.readyState==1&&B.ws.send('{"type":"ping"}'),20000)}
 function closeWS(){try{B.ws&&B.ws.close()}catch{}B.ws=null;B.wsReady=false}
-const ERR={provider_unavailable:'No text provider is connected on the server, so Bags cannot reply yet.',provider_busy:'Bags is busy with another reply. Try again in a moment.',turn_busy:'Still answering your last message.',codex_text_failed_or_sandbox_blocked:'The text provider failed on the server. Nothing was sent elsewhere.',speech_layer_required:'Server voice is not available. Live session uses your browser speech instead.',attachment_not_supported:'The current provider cannot read attachments. The file is stored, not analysed.'};
+const ERR={provider_unavailable:'The text provider failed on the server. No reply was invented in its place.',provider_busy:'Bags is busy with another reply. Try again in a moment.',turn_busy:'Still answering your last message.',interrupted:'Reply stopped.',codex_text_failed_or_sandbox_blocked:'The text provider failed on the server. Nothing was sent elsewhere.',speech_layer_required:'Server voice is not available. Live session uses your browser speech instead.',attachment_not_supported:'The current provider cannot read attachments. The file is stored, not analysed.',auth_not_configured:'This server has no owner password yet. Set VALET_OWNER_PASSWORD and restart it.'};
 let botBuf='',botTimer;function botText(t,src){botBuf+=t;clearTimeout(botTimer);botTimer=setTimeout(()=>flushBot(src),1500);B.src=src}
 function flushBot(){clearTimeout(botTimer);if(!botBuf)return;const t=botBuf;botBuf='';add('bot',t,B.src||'Bags');if(live.on)say(t)}
 
 /* ================= roster ================= */
 const sp=([id,name,role])=>({id,name,role,live:false});
 let roster=null;
-async function loadRoster(){if(B.mode=='server'&&B.token){const r=await http('api/agents');if(r.ok){roster=r.data.agents.map(a=>({id:a.id,name:a.id=='bags'?P.name:a.name,role:a.role||a.route,live:a.id=='bags'}));tree();return}}roster=null;tree()}
+async function loadRoster(){if(B.mode=='server'&&B.token){const r=await http('api/agents');if(r.ok){roster=r.data.agents.map(a=>({id:a.id,name:a.id=='bagheera_butler.agent'?P.name:a.name,role:a.role||a.route,live:!!a.live&&a.id=='bagheera_butler.agent'}));tree();return}}roster=null;tree()}
 const allAgents=()=>roster||[ORG.personal,ORG.governance,...ORG.ceos.flatMap(c=>[c,...c.specialists.map(sp)])];
 function tree(){const row=a=>`<button class="agent" data-id="${esc(a.id)}"><b>${esc(a.name)}</b><span class="r">${esc(a.role)}</span><span class="st ${a.live?'live':''}">${a.live?'Available':'Disconnected'}</span></button>`;
  $('#tree').innerHTML=roster?`<div class="glass unit">${roster.map(row).join('')}</div>`:`<div class="glass unit">${row(ORG.personal)}${row(ORG.governance)}</div>`+ORG.ceos.map(c=>`<div class="glass unit">${row(c)}<div class="sub">${c.specialists.map(s=>row(sp(s))).join('')}</div></div>`).join('');
@@ -63,7 +72,11 @@ document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>go(b.datase
 
 /* ================= chat log ================= */
 const scrollEnd=()=>requestAnimationFrame(()=>scrollTo({top:document.body.scrollHeight,behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'}));
-function add(who,text,src,extra={}){(logs[agent.id]??=[]).push({who,text,src,...extra});render()}
+function add(who,text,src,extra={}){(logs[agent.id]??=[]).push({who,text,src,...extra});render();persistLocal()}
+function persistLocal(){if(B.mode=='server')return;try{const slim={};for(const[k,arr]of Object.entries(logs))slim[k]=arr.filter(m=>!m.audio).slice(-200);localStorage.valetLogs=JSON.stringify(slim)}catch{}}
+function restoreLocal(){try{const slim=JSON.parse(localStorage.valetLogs||'{}');if(slim.bags&&!slim['bagheera_butler.agent'])slim['bagheera_butler.agent']=slim.bags;logs=slim}catch{logs={}}render()}
+async function loadHistory(){const r=await http('api/messages?agent='+encodeURIComponent(agent.id));if(!r.ok)return;logs[agent.id]=(r.data.messages||[]).map(m=>({who:m.role=='user'?'me':'bot',text:m.text,src:m.role=='user'?'You':P.name+' · '+(m.personality||'Bags')}));render()}
+function greetIfEmpty(){if((logs[agent.id]||[]).length)return;add('bot',`Good evening, sir. ${P.name} here. Type a message, attach a file or an email, or hold the mic for a voice note. Tap the gold Live button when you want to talk hands-free.`,P.name)}
 const sys=t=>add('sys',t,'System');
 function attHTML(a){if(a.kind=='email')return`<div class="mailcard"><b>${esc(a.subject||'(no subject)')}</b><div class="m">From ${esc(a.from||'unknown')}${a.date?' · '+esc(a.date):''}</div><div>${esc(a.body.slice(0,160))}${a.body.length>160?'…':''}</div></div>`;
  return a.thumb?`<div class="att"><img src="${a.thumb}" alt="${esc(a.name)}"></div>`:`<div class="att"><svg><use href="#i-file"/></svg>${esc(a.name)} · ${kb(a.size)}${a.status?' · '+esc(a.status):''}</div>`}
@@ -113,24 +126,36 @@ async function send(text,meta={}){text=(text||'').trim();const list=atts;if(!tex
  const files=list.filter(a=>a.kind=='file');if(files.length)full+=`\n\n[Attached files: ${files.map(f=>f.name+' '+kb(f.size)).join(', ')}]`;
  if(!meta.voice)add('me',text,'You',{atts:list.map(strip)});
  full=full.trim().slice(0,4096)||'[voice note with no transcript]';
- if(B.mode=='server'){if(!B.token)return sys('Pair this device first: tap the status button at the top.');if(!B.wsReady)return sys('Not connected to the server yet. Try again in a moment.');B.ws.send(JSON.stringify({type:'text',text:full}));return}
- const r=await mockApi('chat',{method:'POST',body:{text:full,...meta,files:files.length,emails:emails.map(e=>({subject:e.subject,from:e.from,body:e.body}))}});
- add('bot',r.data.reply,P.name+' · demo');if(live.on||meta.voice)say(r.data.reply)}
+ shell.processing=true;shell.error=false;paintOrb();
+ let pending=false;
+ try{if(B.mode=='server'){if(!B.token)return sys('Sign in first: tap the status button at the top.');if(!B.wsReady)return sys('Not connected to the server yet. Try again in a moment.');B.ws.send(JSON.stringify({type:'text',text:full}));pending=true;return}
+  const r=await mockApi('chat',{method:'POST',body:{text:full,...meta,personality:currentPersonality(),files:files.length,emails:emails.map(e=>({subject:e.subject,from:e.from,body:e.body}))}});
+  add('bot',r.data.reply,P.name+' · demo');if(live.on||meta.voice)say(r.data.reply)}
+ finally{if(!pending){shell.processing=false;paintOrb()}}}
 const strip=a=>({kind:a.kind,name:a.name,size:a.size,thumb:a.thumb,status:a.status,subject:a.subject,from:a.from,date:a.date,body:a.body||''});
 $('#composer').onsubmit=e=>{e.preventDefault();const t=$('#msg').value;$('#msg').value='';send(t);$('#msg').focus()};
 
 /* ================= live session (off by default; starts only on tap) ================= */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition,tts=window.speechSynthesis;const live={on:false,rec:null,speaking:false};
-function say(t){if(!tts)return;live.speaking=true;try{live.rec&&live.rec.abort()}catch{}const u=new SpeechSynthesisUtterance(t);u.lang='en-GB';const v=tts.getVoices().find(v=>v.lang=='en-GB');if(v)u.voice=v;
- u.onend=u.onerror=()=>{live.speaking=false;if(live.on)listen()};tts.cancel();tts.speak(u)}
-function listen(){if(!live.on||live.speaking||!SR)return;const r=new SR();live.rec=r;r.lang='en-GB';r.interimResults=true;
+const shell={error:false,processing:false,muted:false};
+function paintOrb(){const state=window.orbState({error:shell.error,processing:shell.processing,muted:shell.muted,speaking:!!live.speaking,listening:!!live.on&&!live.speaking&&!shell.muted});const el=$('#voiceOrb');if(el)el.dataset.state=state;const label={idle:'Idle',listening:'Listening',processing:'Processing',speaking:'Speaking',muted:'Muted',error:'Error'}[state]||state;const s=$('#orbStatus');if(s)s.textContent=label}
+function applyPersonality(p){p=['cynical','precise','warm'].includes(p)?p:'cynical';localStorage.valetPersonality=p;const s=$('#personality');if(s&&s.value!==p)s.value=p;const prov=$('#provider');if(prov)prov.textContent=(live.on?'Live session on':B.mode=='mock'?'Plain chat · demo':'Plain chat')+' · '+p}
+let accent=parseInt(localStorage.valetAccent||'0',10)||0;
+function applyAccent(i){accent=((i%4)+4)%4;localStorage.valetAccent=String(accent);document.documentElement.dataset.accent=['brass','cyan','violet','clay'][accent]}
+applyAccent(accent);
+function say(t){if(!tts||shell.muted){paintOrb();return}live.speaking=true;paintOrb();try{live.rec&&live.rec.abort()}catch{}const u=new SpeechSynthesisUtterance(t);u.lang='en-GB';const v=tts.getVoices().find(v=>v.lang=='en-GB');if(v)u.voice=v;
+ u.onend=u.onerror=()=>{live.speaking=false;paintOrb();if(live.on&&!shell.muted)listen()};tts.cancel();tts.speak(u)}
+function listen(){if(!live.on||live.speaking||shell.muted||!SR)return;const r=new SR();live.rec=r;r.lang='en-GB';r.interimResults=true;paintOrb();
  r.onresult=e=>{let f='',p='';for(const x of e.results)x.isFinal?f+=x[0].transcript:p+=x[0].transcript;$('#partial').textContent=p;if(f.trim()){$('#partial').textContent='';send(f)}};
  r.onerror=e=>{if(e.error=='not-allowed'||e.error=='service-not-allowed'){stopLive();sys('Microphone permission denied, so the live session stopped. Typing still works.')}};
- r.onend=()=>{if(live.on&&!live.speaking)setTimeout(listen,300)};try{r.start()}catch{}}
+ r.onend=()=>{if(live.on&&!live.speaking&&!shell.muted)setTimeout(listen,300)};try{r.start()}catch{}}
 function paintLive(){$('#liveBtn').setAttribute('aria-pressed',live.on);$('#liveBtn').setAttribute('aria-label',live.on?'End live session':'Start live session');$('#liveLbl').textContent=live.on?'End live':'Live';$('.fab-slot').classList.toggle('on',live.on);setConn()}
 function startLive(quiet){go('chat');if(!SR){sys('This browser has no speech recognition, so a live session is not possible here. Try Chrome on Android. Typing and voice notes still work.');return}
- if(!agent.live)return sys(agent.name+' is disconnected.');live.on=true;paintLive();if(!quiet){sys('Live session started. Speak, pause, and '+P.short+' answers aloud. The mic pauses while '+P.short+' talks.');listen()}}
-function stopLive(){if(!live.on)return;live.on=false;try{live.rec&&live.rec.abort()}catch{}tts&&tts.cancel();live.speaking=false;$('#partial').textContent='';paintLive();sys('Live session ended.');B.ws?.readyState==1&&B.ws.send('{"type":"interrupt"}')}
+ if(!agent.live)return sys(agent.name+' is disconnected.');live.on=true;paintLive();paintOrb();if(!quiet){sys('Live session started. Speak, pause, and '+P.short+' answers aloud. The mic pauses while '+P.short+' talks.');listen()}}
+function stopLive(){if(!live.on)return;live.on=false;try{live.rec&&live.rec.abort()}catch{}tts&&tts.cancel();live.speaking=false;$('#partial').textContent='';paintLive();paintOrb();sys('Live session ended.');B.ws?.readyState==1&&B.ws.send('{"type":"interrupt"}')}
+$('#muteBtn').onclick=()=>{shell.muted=!shell.muted;$('#muteBtn').setAttribute('aria-pressed',shell.muted);$('#muteBtn').setAttribute('aria-label',shell.muted?'Unmute Bags':'Mute Bags');if(shell.muted){try{live.rec&&live.rec.abort()}catch{}tts&&tts.cancel();live.speaking=false}else if(live.on)listen();paintOrb()};
+let orbTaps=0,orbTapAt=0;
+$('#voiceOrb').onclick=()=>{const now=Date.now();orbTaps=now-orbTapAt<450?orbTaps+1:1;orbTapAt=now;if(orbTaps>=3){orbTaps=0;applyAccent(window.cycleAccent(accent));sys('Accent changed. That is colour only.')}};
 $('#liveBtn').onclick=()=>live.on?stopLive():startLive();
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stopLive();if(mr)recStop(true)}});// sensors never keep running in background
 
@@ -215,6 +240,7 @@ $('#simCall').onclick=()=>setTimeout(()=>incoming({from:ORG.personal.id,source:'
 
 /* ================= boot: plain chat, greeting, nothing live ================= */
 $('#agentHdr').textContent=P.name+' · '+ORG.personal.role;
-tree();paintLive();add('bot',`Good evening, sir. ${P.name} here. Type a message, attach a file or an email, or hold the mic for a voice note. Tap the gold Live button when you want to talk hands-free.`,P.name);
-detect().then(()=>{if(B.mode=='mock'){mockApi('events?after=0').then(r=>cursor=r.data.next_cursor||0);if(!sessionStorage.demoCall){sessionStorage.demoCall=1;setTimeout(()=>incoming({from:ORG.personal.id,source:'demo'}),25000)}}});
+applyPersonality(currentPersonality());
+tree();paintLive();paintOrb();
+detect().then(()=>{greetIfEmpty();if(B.mode=='mock'){mockApi('events?after=0').then(r=>cursor=r.data.next_cursor||0);if(!sessionStorage.demoCall){sessionStorage.demoCall=1;setTimeout(()=>incoming({from:ORG.personal.id,source:'demo'}),25000)}}});
 $('#callBadge').hidden=!calls.some(x=>x.status=='missed'&&!x.seen);
