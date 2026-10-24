@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
 const files = [
-  'index.html', 'app.css', 'app.js', 'agents.js', 'mock.js', 'orb-state.js',
+  'index.html', 'app.css', 'app.js', 'agents.js', 'mock.js', 'orb-state.js', 'voice-session.js',
   'sw.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', '.nojekyll',
 ];
 const checks = [
-  'app.js', 'agents.js', 'mock.js', 'orb-state.js', 'sw.js',
+  'app.js', 'agents.js', 'mock.js', 'orb-state.js', 'voice-session.js', 'sw.js',
   'server/index.js', 'server/auth.js', 'server/chat.js', 'server/store.js',
   'server/personalities.js', 'server/pair-code.js', 'server/build.js',
 ];

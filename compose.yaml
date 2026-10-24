@@ -1,0 +1,16 @@
+services:
+  valet:
+    build: .
+    env_file: .env
+    environment:
+      VALET_HOST: 0.0.0.0
+      VALET_PORT: "8787"
+      VALET_DATA_DIR: /var/lib/valet
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - valet-data:/var/lib/valet
+    restart: unless-stopped
+
+volumes:
+  valet-data:
