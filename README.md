@@ -8,12 +8,12 @@ Open the site, sign in, and talk to Bags in text or by voice. The conversation i
 
 - The app serves and the production build completes (`npm run build`).
 - Owner sign-in with `VALET_OWNER_PASSWORD`, plus a one-time pairing code for a second device.
-- Text chat with Bags over the existing live socket. History is reloaded after a new sign-in.
+- Text chat with Bags over the existing live socket. History lists earlier chats and can open one. A new chat does not erase the older ones. The current chat is reloaded after a new sign-in.
 - Personality is **Cynical** by default, or Precise / Warm. That changes tone only.
 - With no model key, a local butler replies. It can recall earlier lines in the chat. It cannot send mail, call agents, or finish tasks, and it says so.
 - With `VALET_LLM_API_KEY`, replies come from an OpenAI-compatible chat API. If that call fails, Valet reports the failure and does not invent a successful answer.
-- Meetings and status checks stay on this server. A status check reports that Paperclip and PMS are not linked. Approval flags are checked on the server.
-- Live (centre button) starts and stops a browser voice session with Bags. The glass orb shows IDLE, LISTENING, PROCESSING, SPEAKING, MUTED, or ERROR from that lifecycle. Triple-tap the orb to change the accent. The composer stays usable while Live is on; a typed line joins the same transcript. Mute, theme, personality, and lock sit in the connection panel. Chrome on this machine reached LISTENING, PROCESSING, MUTED, and ERROR with the real speech recognizer. SPEAKING is wired for when the browser has a speech voice; this Chrome had none, so replies stayed on screen. No phone microphone, phone speaker, or Android device was used.
+- Activities leads with Open meeting and Run status check. Meeting approval is still checked on the server. A status check reports that Paperclip and PMS are not linked.
+- Live (centre button) starts and stops a browser voice session with Bags. The glass orb shows IDLE, LISTENING, PROCESSING, SPEAKING, MUTED, or ERROR from that lifecycle. Triple-tap the orb to change the accent. The composer stays usable while Live is on; a typed line joins the same transcript. The top bar is the BAGS mark, a light or dark toggle, and Profile. Profile holds sign-in, pairing, lock, personality, mute, and the model name reported by health. Chrome on this machine reached LISTENING, PROCESSING, MUTED, and ERROR with the real speech recognizer. SPEAKING is wired for when the browser has a speech voice; this Chrome had none, so replies stayed on screen. No phone microphone, phone speaker, or Android device was used.
 
 ## What this build does not do
 
@@ -36,7 +36,7 @@ npm run build
 npm start
 ```
 
-Then open `http://127.0.0.1:8787`. The password is checked on the server. The browser stores the session token in `localStorage` so a refresh keeps the chat; lock the device from the connection panel to erase server data and the token.
+Then open `http://127.0.0.1:8787`. The password is checked on the server. The browser stores the session token in `localStorage` so a refresh keeps the chat; lock the device from Profile to erase server data and the token.
 
 A second device can be paired without the password. The code is single-use and lasts 5 minutes:
 
