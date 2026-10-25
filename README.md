@@ -8,7 +8,7 @@ Open the site, sign in, and talk to Bags in text or by voice. The conversation i
 
 - The app serves and the production build completes (`npm run build`).
 - Owner sign-in with `VALET_OWNER_PASSWORD`, plus a one-time pairing code for a second device.
-- Text chat with Bags over the existing live socket. History lists earlier chats and can open one. A new chat does not erase the older ones. The current chat is reloaded after a new sign-in.
+- Text chat with Bags over the existing live socket. Earlier chats open in a side panel from the list icon beside the thread. A new chat does not erase the older ones. The current chat is reloaded after a new sign-in.
 - Personality is **Cynical** by default, or Precise / Warm. That changes tone only.
 - With no model key, a local butler replies. It can recall earlier lines in the chat. It cannot send mail, call agents, or finish tasks, and it says so.
 - With `VALET_LLM_API_KEY`, replies come from an OpenAI-compatible chat API. If that call fails, Valet reports the failure and does not invent a successful answer.

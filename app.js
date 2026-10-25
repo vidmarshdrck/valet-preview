@@ -68,8 +68,9 @@ async function pick(a){stopLive();if(B.mode=='server'&&B.token){const r=await ht
  agent=a;$('#msg').disabled=!a.live;$('#msg').placeholder=a.live?'Message '+a.name:a.name+' is disconnected';render();go('chat')}
 
 /* ================= bottom tab bar ================= */
-function go(tab){document.querySelectorAll('.tabbar button').forEach(b=>{const on=b.dataset.tab==tab;b.classList.toggle('on',on);on?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current')});
+function go(tab){document.body.dataset.tab=tab;document.querySelectorAll('.tabbar button').forEach(b=>{const on=b.dataset.tab==tab;b.classList.toggle('on',on);on?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current')});
  document.querySelectorAll('.tab').forEach(s=>s.classList.toggle('on',s.id==tab));document.body.classList.toggle('no-dock',tab!='chat');
+ if(tab!='chat'&&!wideHistory())closeHistory();
  if(tab=='act'){loadTasks();loadMeetings()}if(tab=='calls')renderCalls();if(tab=='chat')scrollEnd();else scrollTo(0,0)}
 document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>go(b.dataset.tab));
 
@@ -80,16 +81,21 @@ let conversationId=localStorage.valetConversation||'';
 function rememberConversation(id){conversationId=id||'';if(conversationId)localStorage.valetConversation=conversationId;else localStorage.removeItem('valetConversation')}
 function readThreads(){try{return JSON.parse(localStorage.valetThreads||'[]')}catch{return []}}
 function writeThreads(list){localStorage.valetThreads=JSON.stringify(list.slice(0,40))}
-function persistLocal(){if(B.mode=='server')return;try{const slim={};for(const[k,arr]of Object.entries(logs))slim[k]=arr.filter(m=>!m.audio).slice(-200);localStorage.valetLogs=JSON.stringify(slim);const messages=slim[agent.id]||[];if(!conversationId)rememberConversation('local-current');const preview=(messages.find(m=>m.who=='me')||{}).text||'';const rest=readThreads().filter(t=>t.id!==conversationId);rest.unshift({id:conversationId,title:(preview||'This chat').slice(0,80),updated:Date.now(),preview,messages});writeThreads(rest)}catch{}}
+function persistLocal(){if(B.mode=='server')return;try{const slim={};for(const[k,arr]of Object.entries(logs))slim[k]=arr.filter(m=>!m.audio).slice(-200);localStorage.valetLogs=JSON.stringify(slim);const messages=slim[agent.id]||[];if(!conversationId)rememberConversation('local-current');const preview=(messages.find(m=>m.who=='me')||{}).text||'';const rest=readThreads().filter(t=>t.id!==conversationId);rest.unshift({id:conversationId,title:(preview||'This chat').slice(0,80),updated:Date.now(),preview,messages});writeThreads(rest);if(!$('#historyAside').hidden)paintHistory(readThreads())}catch{}}
 function restoreLocal(){try{const threads=readThreads();if(threads.length){const current=threads.find(t=>t.id===localStorage.valetConversation)||threads[0];rememberConversation(current.id);logs[agent.id]=current.messages||[];render();return}const slim=JSON.parse(localStorage.valetLogs||'{}');if(slim.bags&&!slim['bagheera_butler.agent'])slim['bagheera_butler.agent']=slim.bags;logs=slim}catch{logs={}}render()}
 async function loadHistory(){const query=conversationId?'&conversation='+encodeURIComponent(conversationId):'';const r=await http('api/messages?agent='+encodeURIComponent(agent.id)+query);if(!r.ok){if(r.status==404){rememberConversation('');return loadHistory()}return}if(r.data.conversation_id)rememberConversation(r.data.conversation_id);logs[agent.id]=(r.data.messages||[]).map(m=>({who:m.role=='user'?'me':'bot',text:m.text,src:m.role=='user'?'You':P.name+' · '+(m.personality||'Bags')}));render()}
-function paintHistory(items){const list=$('#historyList');list.innerHTML=items.length?items.map(item=>`<button type="button" data-c="${esc(item.id)}"><b>${esc(item.title||'Chat')}</b><span class="note">${esc((item.preview||'').slice(0,80))}</span></button>`).join(''):'<p class="note">No earlier chats yet.</p>';list.querySelectorAll('[data-c]').forEach(button=>button.onclick=()=>openConversation(button.dataset.c))}
-async function showHistory(){if(B.mode=='server'&&B.token){const r=await http('api/conversations');if(!r.ok)return sys('History is not available until you are signed in.');paintHistory(r.data.conversations||[])}else paintHistory(readThreads());$('#historySheet').hidden=false}
-async function openConversation(id){rememberConversation(id);$('#historySheet').hidden=true;if(B.mode=='server'&&B.token){await loadHistory();return}const thread=readThreads().find(item=>item.id===id);logs[agent.id]=thread?.messages||[];render()}
-async function startNewChat(){$('#historySheet').hidden=true;if(B.mode=='server'&&B.token){const r=await http('api/conversations',{method:'POST',body:{}});if(!r.ok)return sys('Could not start a new chat.');rememberConversation(r.data.id);logs[agent.id]=[];render();greetIfEmpty();return}rememberConversation('local-'+Date.now());logs[agent.id]=[];render();greetIfEmpty();persistLocal()}
-$('#historyBtn').onclick=()=>showHistory();
-$('#historyClose').onclick=()=>{$('#historySheet').hidden=true};
+const wideHistory=()=>matchMedia('(min-width:1280px)').matches;
+function setHistoryOpen(open){const aside=$('#historyAside');aside.hidden=!open;document.body.classList.toggle('history-open',!!open);const btn=$('#historyToggle');if(btn){btn.setAttribute('aria-expanded',open?'true':'false');btn.setAttribute('aria-label',open?'Close chat history':'Open chat history')}}
+function closeHistory(){setHistoryOpen(false)}
+function paintHistory(items){const list=$('#historyList');list.innerHTML=items.length?items.map(item=>{const title=item.title||'Chat';const preview=String(item.preview||'').slice(0,80);const note=preview&&preview!==title?`<span class="note">${esc(preview)}</span>`:'';return `<button type="button" data-c="${esc(item.id)}"${item.id===conversationId?' class="on"':''}><b>${esc(title)}</b>${note}</button>`}).join(''):'<p class="note">No earlier chats yet.</p>';list.querySelectorAll('[data-c]').forEach(button=>button.onclick=()=>openConversation(button.dataset.c))}
+async function showHistory(){if(B.mode=='server'&&B.token){const r=await http('api/conversations');if(!r.ok)return sys('History is not available until you are signed in.');paintHistory(r.data.conversations||[])}else paintHistory(readThreads());setHistoryOpen(true)}
+async function openConversation(id){rememberConversation(id);if(!wideHistory())closeHistory();if(B.mode=='server'&&B.token){await loadHistory();if(!$('#historyAside').hidden)showHistory();return}const thread=readThreads().find(item=>item.id===id);logs[agent.id]=thread?.messages||[];render();if(!$('#historyAside').hidden)paintHistory(readThreads())}
+async function startNewChat(){if(!wideHistory())closeHistory();if(B.mode=='server'&&B.token){const r=await http('api/conversations',{method:'POST',body:{}});if(!r.ok)return sys('Could not start a new chat.');rememberConversation(r.data.id);logs[agent.id]=[];render();greetIfEmpty();if(!$('#historyAside').hidden)showHistory();return}rememberConversation('local-'+Date.now());logs[agent.id]=[];render();greetIfEmpty();persistLocal()}
+$('#historyToggle').onclick=()=>$('#historyAside').hidden?showHistory():closeHistory();
+$('#historyClose').onclick=()=>closeHistory();
+$('#historyScrim').onclick=()=>closeHistory();
 $('#newChat').onclick=()=>startNewChat();
+matchMedia('(min-width:1280px)').addEventListener('change',e=>{if(e.matches)showHistory();else closeHistory()});
 function greetIfEmpty(){if((logs[agent.id]||[]).length)return;add('bot',`Good evening, sir. ${P.name} here. Type a message, attach a file or an email, or hold the mic for a voice note. Tap Live when you want to talk hands-free.`,P.name)}
 const sys=t=>add('sys',t,'System');
 function attHTML(a){if(a.kind=='email')return`<div class="mailcard"><b>${esc(a.subject||'(no subject)')}</b><div class="m">From ${esc(a.from||'unknown')}${a.date?' · '+esc(a.date):''}</div><div>${esc(a.body.slice(0,160))}${a.body.length>160?'…':''}</div></div>`;
@@ -265,5 +271,5 @@ $('#simCall').onclick=()=>setTimeout(()=>incoming({from:ORG.personal.id,source:'
 /* ================= boot: plain chat, greeting, nothing live ================= */
 applyPersonality(currentPersonality());
 tree();paintLive();paintOrb();
-detect().then(()=>{greetIfEmpty();if(B.mode=='mock')mockApi('events?after=0').then(r=>cursor=r.data.next_cursor||0)});
+detect().then(()=>{greetIfEmpty();if(wideHistory())showHistory();if(B.mode=='mock')mockApi('events?after=0').then(r=>cursor=r.data.next_cursor||0)});
 $('#callBadge').hidden=!calls.some(x=>x.status=='missed'&&!x.seen);
