@@ -98,7 +98,13 @@ test('the phone header, Live control, and deploy files match this build', () => 
   assert.match(html, /id="liveLbl">Live</);
   assert.match(html, /<span>Chat<\/span>/);
   assert.equal(/<span>Talk<\/span>/.test(html), false);
-  assert.match(html, /id="historyBtn"/);
+  assert.match(html, /<aside id="historyAside"/);
+  assert.match(html, /id="historyToggle"/);
+  assert.match(html, /id="newChat"/);
+  assert.match(html, /id="historyList"/);
+  assert.equal(/id="historyBtn"/.test(html), false);
+  assert.equal(/<button[^>]*>\s*History\s*<\/button>/.test(html), false);
+  assert.match(readFileSync(new URL('./sw.js', root), 'utf8'), /const C='valet-v12'/);
   assert.match(html, /id="mCreate"[^>]*>Open meeting/);
   assert.equal(/id="mProject"|id="mOk"|id="tSpeak"/.test(html), false);
   assert.match(html, /id="composer" class="glass dock"/);
