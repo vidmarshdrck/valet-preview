@@ -85,14 +85,22 @@ test('the phone page does not show draft, demo, sample, or placeholder labels', 
 test('the phone header, Live control, and deploy files match this build', () => {
   const html = readFileSync(new URL('./index.html', root), 'utf8');
   const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
-  const panel = html.slice(html.indexOf('id="connPanel"'), html.indexOf('id="voiceOrb"'));
-  assert.equal(header.includes('muteBtn') || header.includes('themeBtn'), false);
-  assert.match(header, /id="connBtn"/);
+  const panel = html.slice(html.indexOf('id="profileSheet"'), html.indexOf('<main>'));
+  assert.equal(/muteBtn|connBtn|agentHdr|Plain chat|provider/.test(header), false);
+  assert.match(header, /id="themeBtn"/);
+  assert.match(header, /id="profileBtn"/);
+  assert.match(header, />BAGS</);
   assert.match(panel, /id="muteBtn"/);
-  assert.match(panel, /id="themeBtn"/);
   assert.match(panel, /id="personality"/);
   assert.match(panel, /id="lockBtn"/);
+  assert.match(panel, /id="modelLine"/);
+  assert.match(panel, /id="loginForm"/);
   assert.match(html, /id="liveLbl">Live</);
+  assert.match(html, /<span>Chat<\/span>/);
+  assert.equal(/<span>Talk<\/span>/.test(html), false);
+  assert.match(html, /id="historyBtn"/);
+  assert.match(html, /id="mCreate"[^>]*>Open meeting/);
+  assert.equal(/id="mProject"|id="mOk"|id="tSpeak"/.test(html), false);
   assert.match(html, /id="composer" class="glass dock"/);
   const activities = html.match(/<button data-tab="act"[^>]*>/);
   assert.ok(activities);

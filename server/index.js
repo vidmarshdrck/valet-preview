@@ -92,17 +92,59 @@ function requireSession(db, req, res) {
   return session;
 }
 
-function listMessages(db, agentId) {
+function listMessages(db, agentId, conversationId) {
   const rows = db.prepare(
-    'SELECT role, text, personality, created_at FROM messages WHERE agent_id = ? ORDER BY id DESC LIMIT 200',
-  ).all(agentId).reverse();
+    'SELECT role, text, personality, created_at FROM messages WHERE agent_id = ? AND conversation_id = ? ORDER BY id ASC LIMIT 400',
+  ).all(agentId, conversationId);
   return rows.map((r) => ({ role: r.role, text: r.text, personality: r.personality, created_at: r.created_at }));
 }
 
-function addMessage(db, { agentId, role, text, personality }) {
+function latestConversationId(db) {
+  return db.prepare('SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1').get()?.id || '';
+}
+
+function createConversation(db) {
+  const now = Date.now();
+  const id = randomBytes(8).toString('hex');
+  db.prepare('INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, 'New chat', now, now);
+  return id;
+}
+
+function ensureConversation(db, requested) {
+  const id = String(requested || '').trim();
+  if (id && db.prepare('SELECT id FROM conversations WHERE id = ?').get(id)) return id;
+  const latest = latestConversationId(db);
+  if (!requested && latest) return latest;
+  return createConversation(db);
+}
+
+function touchConversation(db, conversationId, userText) {
+  const now = Date.now();
+  const row = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
+  const title = row && (row.title === 'New chat' || row.title === 'Earlier chat') && userText
+    ? String(userText).trim().slice(0, 80)
+    : row?.title || 'New chat';
+  db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run(title, now, conversationId);
+}
+
+function listConversations(db) {
+  return db.prepare(`
+    SELECT c.id, c.title, c.updated_at,
+      (SELECT text FROM messages WHERE conversation_id = c.id AND role = 'user' ORDER BY id LIMIT 1) AS preview
+    FROM conversations c
+    ORDER BY c.updated_at DESC
+  `).all().map((row) => ({
+    id: row.id,
+    title: row.title,
+    updated_at: row.updated_at,
+    preview: row.preview || '',
+  }));
+}
+
+function addMessage(db, { agentId, role, text, personality, conversationId }) {
   const created = Date.now();
-  db.prepare('INSERT INTO messages (agent_id, role, text, personality, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(agentId, role, text, normalizePersonality(personality), created);
+  db.prepare('INSERT INTO messages (agent_id, role, text, personality, created_at, conversation_id) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(agentId, role, text, normalizePersonality(personality), created, conversationId);
 }
 
 function addEvent(db, type, payload) {
@@ -214,10 +256,27 @@ export function createApp(options = {}) {
           const token = bearer(req);
           return send(res, 200, { token, agent_id: BUTLER_ID });
         }
+        if (req.method === 'GET' && path === '/api/conversations') {
+          return send(res, 200, { conversations: listConversations(db) });
+        }
+        if (req.method === 'POST' && path === '/api/conversations') {
+          const id = createConversation(db);
+          const row = listConversations(db).find((item) => item.id === id);
+          return send(res, 201, row);
+        }
         if (req.method === 'GET' && path === '/api/messages') {
           const agent = canonicalAgent(url.searchParams.get('agent'));
           if (agent !== BUTLER_ID) return send(res, 404, { error: 'unknown_agent' });
-          return send(res, 200, { messages: listMessages(db, BUTLER_ID), agent_id: BUTLER_ID });
+          const requested = url.searchParams.get('conversation') || '';
+          const conversationId = requested
+            ? (db.prepare('SELECT id FROM conversations WHERE id = ?').get(requested)?.id || '')
+            : latestConversationId(db);
+          if (requested && !conversationId) return send(res, 404, { error: 'unknown_conversation' });
+          return send(res, 200, {
+            messages: conversationId ? listMessages(db, BUTLER_ID, conversationId) : [],
+            agent_id: BUTLER_ID,
+            conversation_id: conversationId,
+          });
         }
         if (req.method === 'DELETE' && path === '/api/device') {
           wipeOwnerData(db);
@@ -333,7 +392,7 @@ export function createApp(options = {}) {
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy': "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self'; font-src 'self'",
         'Content-Length': st.size,
-        'Cache-Control': extname(file) === '.html' ? 'no-cache' : 'public, max-age=300',
+        'Cache-Control': ['.html', '.js', '.css'].includes(extname(file).toLowerCase()) ? 'no-cache' : 'public, max-age=300',
       });
       if (req.method === 'HEAD') return res.end();
       createReadStream(file).pipe(res);
@@ -388,8 +447,10 @@ export function createApp(options = {}) {
       const live = readSession(db, token);
       if (!live) return socket.close(4401, 'unauthorized');
       const personality = live.personality || DEFAULT_PERSONALITY;
-      addMessage(db, { agentId: BUTLER_ID, role: 'user', text, personality });
-      const history = listMessages(db, BUTLER_ID).slice(0, -1);
+      const conversationId = ensureConversation(db, msg.conversation_id);
+      touchConversation(db, conversationId, text);
+      addMessage(db, { agentId: BUTLER_ID, role: 'user', text, personality, conversationId });
+      const history = listMessages(db, BUTLER_ID, conversationId).slice(0, -1);
       const controller = new AbortController();
       inflight = controller;
       let result;
@@ -410,9 +471,9 @@ export function createApp(options = {}) {
         socket.send(JSON.stringify({ type: 'error', error: result.error }));
         return;
       }
-      addMessage(db, { agentId: BUTLER_ID, role: 'assistant', text: result.text, personality });
+      addMessage(db, { agentId: BUTLER_ID, role: 'assistant', text: result.text, personality, conversationId });
       socket.send(JSON.stringify({ type: 'text', text: result.text }));
-      socket.send(JSON.stringify({ type: 'turn.complete' }));
+      socket.send(JSON.stringify({ type: 'turn.complete', conversation_id: conversationId }));
     });
   });
 
